@@ -2,16 +2,27 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:nexon/screens/chat_screen.dart';
 import 'package:nexon/screens/settings_screen.dart';
+import 'package:nexon/screens/conversation_detail_screen.dart';
+import 'package:nexon/providers/theme_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-void main() {
+// Initialize database here
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize SharedPreferences for theme
+  await SharedPreferences.getInstance();
+
   runApp(const ProviderScope(child: NexonApp()));
 }
 
-class NexonApp extends StatelessWidget {
+class NexonApp extends ConsumerWidget {
   const NexonApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    // Watch theme changes
+    final themeState = ref.watch(themeProvider);
     // Electric Blue color
     const primaryColor = Color(0xFF3B82F6);
 
@@ -69,7 +80,7 @@ class NexonApp extends StatelessWidget {
           ),
         ),
       ),
-      themeMode: ThemeMode.system,
+      themeMode: themeState.flutterThemeMode,
       initialRoute: '/',
       routes: {'/': (context) => const ChatScreen(), '/settings': (context) => const SettingsScreen()},
     );

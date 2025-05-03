@@ -46,8 +46,15 @@ dependencies:
   # UI and utilities
   flutter_markdown: ^0.6.17
   uuid: ^4.0.0
-  shared_preferences: ^2.2.2
-  intl: ^0.19.0
+  shared_preferences: ^2.5.3
+  intl: ^0.20.2
+  
+  # Database
+  sqflite: ^2.3.2
+  path: ^1.8.3
+  path_provider: ^2.1.2
+  drift: ^2.15.0
+  sqlite3_flutter_libs: ^0.5.20
 
 dev_dependencies:
   flutter_test:
@@ -61,6 +68,7 @@ dev_dependencies:
   flutter_lints: ^5.0.0
   riverpod_generator: ^2.3.0
   build_runner: ^2.4.6
+  drift_dev: ^2.15.0
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
