@@ -127,7 +127,7 @@ class ConversationRepository {
     final messagesQuery =
         _db.select(_db.messages)
           ..where((t) => t.conversationId.equals(conversationId))
-          ..orderBy([(t) => OrderingTerm(expression: t.orderIndex)]);
+          ..orderBy([(t) => OrderingTerm(expression: t.createdAt)]);
 
     final messages = await messagesQuery.get();
     final result = <model.Message>[];

@@ -37,10 +37,31 @@ class _ConversationDetailScreenState extends ConsumerState<ConversationDetailScr
         ref.read(currentConversationIdProvider.notifier).state = widget.conversationId;
       });
     }
+
+    // Set up keyboard listeners for Enter key handling
+    _focusNode.addListener(() {
+      if (_focusNode.hasFocus) {
+        ServicesBinding.instance.keyboard.addHandler(_handleKeyEvent);
+      } else {
+        ServicesBinding.instance.keyboard.removeHandler(_handleKeyEvent);
+      }
+    });
+
+    _tempChatFocusNode.addListener(() {
+      if (_tempChatFocusNode.hasFocus) {
+        ServicesBinding.instance.keyboard.addHandler(_handleTempChatKeyEvent);
+      } else {
+        ServicesBinding.instance.keyboard.removeHandler(_handleTempChatKeyEvent);
+      }
+    });
   }
 
   @override
   void dispose() {
+    // Remove key event handlers
+    ServicesBinding.instance.keyboard.removeHandler(_handleKeyEvent);
+    ServicesBinding.instance.keyboard.removeHandler(_handleTempChatKeyEvent);
+
     _scrollController.dispose();
     _messageController.dispose();
     _tempChatMessageController.dispose();
@@ -143,35 +164,24 @@ class _ConversationDetailScreenState extends ConsumerState<ConversationDetailScr
     final debugMode = ref.watch(settingsProvider.select((s) => s.debugMode));
 
     return Scaffold(
-      appBar: AppBar(
-        title: conversationAsync.when(
-          data: (conversation) => Text(conversation?.title ?? 'Conversation'),
-          loading: () => const Text('Loading...'),
-          error: (_, __) => const Text('Error'),
-        ),
-        actions: [
-          if (_isGenerating)
-            IconButton(
-              icon: Icon(Icons.stop_circle, color: colorScheme.error),
-              tooltip: 'Stop generating',
-              onPressed: () {
-                setState(() => _isGenerating = false);
-                // In a real app, you would stop the API call
-              },
-            ),
-          // Only show info button in debug mode
-          if (debugMode)
-            IconButton(
-              icon: const Icon(Icons.info_outline),
-              tooltip: 'Conversation details',
-              onPressed: () {
-                _showConversationDetails(context, ref);
-              },
-            ),
-        ],
-      ),
       body: Column(
         children: [
+          // Debug info button only shown in debug mode
+          if (debugMode)
+            Padding(
+              padding: const EdgeInsets.only(top: 4.0, right: 4.0),
+              child: Align(
+                alignment: Alignment.topRight,
+                child: IconButton(
+                  icon: const Icon(Icons.info_outline),
+                  tooltip: 'Conversation details',
+                  onPressed: () {
+                    _showConversationDetails(context, ref);
+                  },
+                ),
+              ),
+            ),
+
           // Messages list
           Expanded(
             child: messagesAsync.when(
@@ -208,59 +218,78 @@ class _ConversationDetailScreenState extends ConsumerState<ConversationDetailScr
               boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 5, offset: const Offset(0, -1))],
             ),
             padding: const EdgeInsets.all(8.0),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                Expanded(
-                  child: RawKeyboardListener(
-                    focusNode: _focusNode,
-                    onKey: (RawKeyEvent event) {
-                      if (event is RawKeyDownEvent && event.logicalKey == LogicalKeyboardKey.enter) {
-                        // Shift+Enter: allow new line
-                        if (event.isShiftPressed) {
-                          return;
-                        }
-                        // Regular Enter: send message
-                        else if (_messageController.text.trim().isNotEmpty && !_isGenerating) {
-                          _sendMessage();
-                          return;
-                        }
-                      }
-                    },
-                    child: TextField(
-                      controller: _messageController,
-                      focusNode: _focusNode,
-                      decoration: InputDecoration(
-                        hintText: 'Type a message...',
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(24)),
-                        filled: true,
-                        contentPadding: const EdgeInsets.all(16),
-                      ),
-                      maxLines: null,
-                      minLines: 1,
-                      textInputAction: TextInputAction.newline,
-                      keyboardType: TextInputType.multiline,
-                      // Function below is for mobile submission
-                      onSubmitted: (text) {
-                        if (text.trim().isNotEmpty && !_isGenerating) {
-                          _sendMessage();
-                        }
-                      },
+                // Show generation indicator and stop button
+                if (_isGenerating)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    decoration: BoxDecoration(color: colorScheme.primaryContainer.withOpacity(0.3), borderRadius: BorderRadius.circular(8)),
+                    child: Row(
+                      children: [
+                        SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: colorScheme.primary)),
+                        const SizedBox(width: 12),
+                        Text('Generating response...', style: TextStyle(color: colorScheme.primary)),
+                        const Spacer(),
+                        IconButton(
+                          icon: Icon(Icons.stop_circle, color: colorScheme.error),
+                          tooltip: 'Stop generating',
+                          onPressed: () {
+                            setState(() => _isGenerating = false);
+                            // In a real app, you would stop the API call
+                          },
+                        ),
+                      ],
                     ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: FloatingActionButton(
-                    heroTag: 'send_message_fab',
-                    onPressed: _isGenerating ? null : _sendMessage,
-                    mini: true,
-                    child:
-                        _isGenerating
-                            ? SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2, color: colorScheme.onPrimaryContainer))
-                            : const Icon(Icons.send),
-                  ),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _messageController,
+                        enabled: !_isGenerating,
+                        focusNode: _focusNode,
+                        decoration: InputDecoration(
+                          hintText: 'Type a message...',
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(24)),
+                          filled: true,
+                          contentPadding: const EdgeInsets.all(16),
+                        ),
+                        maxLines: null,
+                        minLines: 1,
+                        textInputAction: TextInputAction.newline,
+                        keyboardType: TextInputType.multiline,
+                        onSubmitted: (text) {
+                          if (text.trim().isNotEmpty && !_isGenerating) {
+                            _sendMessage();
+                          }
+                        },
+                        // Handle key events at TextField level instead of RawKeyboardListener
+                        onEditingComplete: () {},
+                        onChanged: (_) {},
+                        // The key event handling is now done via a Focus widget below
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: FloatingActionButton(
+                        heroTag: 'send_message_fab',
+                        onPressed: _isGenerating ? null : _sendMessage,
+                        mini: true,
+                        child:
+                            _isGenerating
+                                ? SizedBox(
+                                  width: 24,
+                                  height: 24,
+                                  child: CircularProgressIndicator(strokeWidth: 2, color: colorScheme.onPrimaryContainer),
+                                )
+                                : const Icon(Icons.send),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -297,17 +326,25 @@ class _ConversationDetailScreenState extends ConsumerState<ConversationDetailScr
                 children: [
                   ...message.blocks.map((block) {
                     if (block is TextBlock) {
-                      return MarkdownBody(
-                        data: block.text,
-                        selectable: true,
-                        styleSheet: MarkdownStyleSheet(
-                          p: TextStyle(color: isUser ? colorScheme.onPrimaryContainer : colorScheme.onSurfaceVariant),
-                          code: TextStyle(
-                            backgroundColor: isUser ? colorScheme.primary.withOpacity(0.1) : colorScheme.surface,
-                            fontFamily: 'monospace',
+                      try {
+                        return MarkdownBody(
+                          data: block.text,
+                          selectable: true,
+                          styleSheet: MarkdownStyleSheet(
+                            p: TextStyle(color: isUser ? colorScheme.onPrimaryContainer : colorScheme.onSurfaceVariant),
+                            code: TextStyle(
+                              backgroundColor: isUser ? colorScheme.primary.withOpacity(0.1) : colorScheme.surface,
+                              fontFamily: 'monospace',
+                            ),
                           ),
-                        ),
-                      );
+                        );
+                      } catch (e) {
+                        // Fallback to simple selectable text if markdown throws an error
+                        return SelectableText(
+                          block.text,
+                          style: TextStyle(color: isUser ? colorScheme.onPrimaryContainer : colorScheme.onSurfaceVariant),
+                        );
+                      }
                     } else if (block is ToolCallBlock) {
                       return Card(
                         margin: const EdgeInsets.symmetric(vertical: 8),
@@ -505,59 +542,77 @@ class _ConversationDetailScreenState extends ConsumerState<ConversationDetailScr
               boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 5, offset: const Offset(0, -1))],
             ),
             padding: const EdgeInsets.all(8.0),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                Expanded(
-                  child: RawKeyboardListener(
-                    focusNode: _tempChatFocusNode,
-                    onKey: (RawKeyEvent event) {
-                      if (event is RawKeyDownEvent && event.logicalKey == LogicalKeyboardKey.enter) {
-                        // Shift+Enter: allow new line
-                        if (event.isShiftPressed) {
-                          return;
-                        }
-                        // Regular Enter: send message
-                        else if (_tempChatMessageController.text.trim().isNotEmpty && !_isGenerating) {
-                          _sendMessage();
-                          return;
-                        }
-                      }
-                    },
-                    child: TextField(
-                      controller: _tempChatMessageController,
-                      focusNode: _tempChatFocusNode,
-                      decoration: InputDecoration(
-                        hintText: 'Type a message to start a new chat...',
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(24)),
-                        filled: true,
-                        contentPadding: const EdgeInsets.all(16),
-                      ),
-                      maxLines: null,
-                      minLines: 1,
-                      textInputAction: TextInputAction.newline,
-                      keyboardType: TextInputType.multiline,
-                      // Function below is for mobile submission
-                      onSubmitted: (text) {
-                        if (text.trim().isNotEmpty && !_isGenerating) {
-                          _sendMessage();
-                        }
-                      },
+                // Show generation indicator and stop button
+                if (_isGenerating)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    decoration: BoxDecoration(color: colorScheme.primaryContainer.withOpacity(0.3), borderRadius: BorderRadius.circular(8)),
+                    child: Row(
+                      children: [
+                        SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: colorScheme.primary)),
+                        const SizedBox(width: 12),
+                        Text('Generating response...', style: TextStyle(color: colorScheme.primary)),
+                        const Spacer(),
+                        IconButton(
+                          icon: Icon(Icons.stop_circle, color: colorScheme.error),
+                          tooltip: 'Stop generating',
+                          onPressed: () {
+                            setState(() => _isGenerating = false);
+                            // In a real app, you would stop the API call
+                          },
+                        ),
+                      ],
                     ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: FloatingActionButton(
-                    heroTag: 'send_message_fab',
-                    onPressed: _isGenerating ? null : _sendMessage,
-                    mini: true,
-                    child:
-                        _isGenerating
-                            ? SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2, color: colorScheme.onPrimaryContainer))
-                            : const Icon(Icons.send),
-                  ),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _tempChatMessageController,
+                        enabled: !_isGenerating,
+                        focusNode: _tempChatFocusNode,
+                        decoration: InputDecoration(
+                          hintText: 'Type a message to start a new chat...',
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(24)),
+                          filled: true,
+                          contentPadding: const EdgeInsets.all(16),
+                        ),
+                        maxLines: null,
+                        minLines: 1,
+                        textInputAction: TextInputAction.newline,
+                        keyboardType: TextInputType.multiline,
+                        onSubmitted: (text) {
+                          if (text.trim().isNotEmpty && !_isGenerating) {
+                            _sendMessage();
+                          }
+                        },
+                        // Handle key events at TextField level instead of RawKeyboardListener
+                        onEditingComplete: () {},
+                        onChanged: (_) {},
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: FloatingActionButton(
+                        heroTag: 'send_message_fab',
+                        onPressed: _isGenerating ? null : _sendMessage,
+                        mini: true,
+                        child:
+                            _isGenerating
+                                ? SizedBox(
+                                  width: 24,
+                                  height: 24,
+                                  child: CircularProgressIndicator(strokeWidth: 2, color: colorScheme.onPrimaryContainer),
+                                )
+                                : const Icon(Icons.send),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -565,5 +620,37 @@ class _ConversationDetailScreenState extends ConsumerState<ConversationDetailScr
         ],
       ),
     );
+  }
+
+  // Handle keyboard events for main chat
+  bool _handleKeyEvent(KeyEvent event) {
+    if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.enter) {
+      // Shift+Enter: allow new line
+      if (HardwareKeyboard.instance.isShiftPressed) {
+        return false; // Let the default handler add a new line
+      }
+      // Regular Enter: send message
+      else if (_messageController.text.trim().isNotEmpty && !_isGenerating) {
+        _sendMessage();
+        return true; // We handled this key
+      }
+    }
+    return false; // Let other handlers process the event
+  }
+
+  // Handle keyboard events for temporary chat
+  bool _handleTempChatKeyEvent(KeyEvent event) {
+    if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.enter) {
+      // Shift+Enter: allow new line
+      if (HardwareKeyboard.instance.isShiftPressed) {
+        return false; // Let the default handler add a new line
+      }
+      // Regular Enter: send message
+      else if (_tempChatMessageController.text.trim().isNotEmpty && !_isGenerating) {
+        _sendMessage();
+        return true; // We handled this key
+      }
+    }
+    return false; // Let other handlers process the event
   }
 }

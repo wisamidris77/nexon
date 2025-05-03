@@ -50,10 +50,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final isTemporaryChat = ref.watch(temporaryChatProvider);
     final isLargeScreen = MediaQuery.of(context).size.width >= 1200;
 
+    // Get current conversation title
+    final conversationAsync = currentConversationId != null ? ref.watch(currentConversationProvider) : null;
+
     return Scaffold(
       key: _scaffoldKey,
       appBar: AppBar(
-        title: const Text('Nexon AI Chat'),
+        title:
+            conversationAsync == null || isTemporaryChat
+                ? const Text('Nexon AI Chat')
+                : conversationAsync.when(
+                  data: (conversation) => Text('Nexon AI Chat - ${conversation?.title ?? ''}'),
+                  loading: () => const Text('Nexon AI Chat'),
+                  error: (_, __) => const Text('Nexon AI Chat'),
+                ),
         leading:
             isLargeScreen
                 ? null
