@@ -122,6 +122,26 @@ class ConversationRepository {
     });
   }
 
+  // Method to delete all conversations
+  Future<void> clearAllConversations() async {
+    await _db.transaction(() async {
+      // Get all conversations
+      final conversations = await (_db.select(_db.conversations)).get();
+
+      // Delete each conversation
+      for (final conversation in conversations) {
+        // Delete messages (cascade will delete message blocks)
+        await (_db.delete(_db.messages)..where((t) => t.conversationId.equals(conversation.id))).go();
+
+        // Delete conversation tags
+        await (_db.delete(_db.conversationTags)..where((t) => t.conversationId.equals(conversation.id))).go();
+
+        // Delete conversation
+        await (_db.delete(_db.conversations)..where((t) => t.id.equals(conversation.id))).go();
+      }
+    });
+  }
+
   // Messages
   Future<List<model.Message>> getMessagesForConversation(String conversationId) async {
     final messagesQuery =

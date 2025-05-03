@@ -29,7 +29,7 @@ class AppSettings {
     this.showTimestamps = true,
     this.useDarkMode = false,
     this.useSystemTheme = true,
-    this.startWithNewChat = false,
+    this.startWithNewChat = true,
     this.sendOnEnter = true,
     this.confirmDeleteConversation = true,
     this.searchInMessages = false,
@@ -88,7 +88,7 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     final useSystemTheme = prefs.getBool('useSystemTheme') ?? true;
 
     // Behavior Settings
-    final startWithNewChat = prefs.getBool('startWithNewChat') ?? false;
+    final startWithNewChat = prefs.getBool('startWithNewChat') ?? true;
     final sendOnEnter = prefs.getBool('sendOnEnter') ?? true;
     final confirmDeleteConversation = prefs.getBool('confirmDeleteConversation') ?? true;
 

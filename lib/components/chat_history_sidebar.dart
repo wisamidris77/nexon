@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:nexon/models/conversation.dart';
+import 'package:nexon/models/message.dart'; // Import for Role and TextBlock
 import 'package:nexon/models/folder.dart';
 import 'package:nexon/models/tag.dart';
 import 'package:nexon/providers/conversation_provider.dart';
 import 'package:nexon/providers/database_provider.dart';
+import 'package:nexon/providers/settings_provider.dart';
+import 'package:nexon/data/conversation_repository.dart';
 import 'package:intl/intl.dart';
 
 class ChatHistorySidebar extends ConsumerStatefulWidget {
@@ -100,8 +103,7 @@ class _ChatHistorySidebarState extends ConsumerState<ChatHistorySidebar> {
         }
 
         // Filter conversations by search query
-        final filteredConversations =
-            _searchQuery.isEmpty ? conversations : conversations.where((c) => c.title.toLowerCase().contains(_searchQuery)).toList();
+        final filteredConversations = _filterConversations(conversations, _searchQuery, ref);
 
         if (filteredConversations.isEmpty) {
           return const Center(child: Text('No matching conversations'));
@@ -118,6 +120,61 @@ class _ChatHistorySidebarState extends ConsumerState<ChatHistorySidebar> {
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (_, __) => const Center(child: Text('Error loading conversations')),
     );
+  }
+
+  // Filter conversations by search query
+  List<Conversation> _filterConversations(List<Conversation> conversations, String query, WidgetRef ref) {
+    if (query.isEmpty) return conversations;
+
+    // Get app settings to determine search behavior
+    final appSettings = ref.read(settingsProvider);
+    final searchInMessages = appSettings.searchInMessages;
+
+    // Basic title search
+    List<Conversation> results = conversations.where((c) => c.title.toLowerCase().contains(query.toLowerCase())).toList();
+
+    // If search in messages is enabled, add those results
+    if (searchInMessages && query.length >= 3) {
+      // Only search messages for queries of 3+ chars
+      // Get repository to search messages
+      final repository = ref.read(conversationRepositoryProvider);
+
+      // Process conversations not already in results
+      for (final conversation in conversations) {
+        if (!results.contains(conversation)) {
+          repository.getMessagesForConversation(conversation.id).then((messages) {
+            // Search in messages based on settings
+            bool hasMatch = false;
+
+            for (final message in messages) {
+              // Only search in appropriate message types based on settings
+              if ((message.role == Role.user && appSettings.searchInUserMessages) || (message.role == Role.bot && appSettings.searchInBotMessages)) {
+                // Search in message text blocks
+                for (final block in message.blocks) {
+                  if (block is TextBlock) {
+                    if (block.text.toLowerCase().contains(query.toLowerCase())) {
+                      hasMatch = true;
+                      break;
+                    }
+                  }
+                }
+
+                if (hasMatch) break;
+              }
+            }
+
+            // If a match was found in messages, add the conversation to results
+            if (hasMatch && !results.contains(conversation)) {
+              results.add(conversation);
+              // Force UI refresh by updating state
+              if (mounted) setState(() {});
+            }
+          });
+        }
+      }
+    }
+
+    return results;
   }
 
   // Comment out folder and tag related widgets

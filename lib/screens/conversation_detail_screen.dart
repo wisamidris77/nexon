@@ -303,13 +303,19 @@ class _ConversationDetailScreenState extends ConsumerState<ConversationDetailScr
     final isUser = message.role == Role.user;
     final colorScheme = Theme.of(context).colorScheme;
 
+    // Get app settings for avatar and timestamp display
+    final appSettings = ref.watch(settingsProvider);
+    final showAvatars = appSettings.showAvatars;
+    final showTimestamps = appSettings.showTimestamps;
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8.0),
       child: Row(
         mainAxisAlignment: isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (!isUser) CircleAvatar(backgroundColor: colorScheme.primary.withOpacity(0.2), child: Icon(Icons.smart_toy, color: colorScheme.primary)),
+          if (!isUser && showAvatars)
+            CircleAvatar(backgroundColor: colorScheme.primary.withOpacity(0.2), child: Icon(Icons.smart_toy, color: colorScheme.primary)),
 
           const SizedBox(width: 8),
 
@@ -369,17 +375,18 @@ class _ConversationDetailScreenState extends ConsumerState<ConversationDetailScr
                     }
                   }).toList(),
 
-                  // Timestamp
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8.0),
-                    child: Text(
-                      DateFormat('h:mm a').format(message.createdAt),
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: isUser ? colorScheme.onPrimaryContainer.withOpacity(0.6) : colorScheme.onSurfaceVariant.withOpacity(0.6),
+                  // Timestamp - only show if enabled in settings
+                  if (showTimestamps)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8.0),
+                      child: Text(
+                        DateFormat('h:mm a').format(message.createdAt),
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: isUser ? colorScheme.onPrimaryContainer.withOpacity(0.6) : colorScheme.onSurfaceVariant.withOpacity(0.6),
+                        ),
                       ),
                     ),
-                  ),
                 ],
               ),
             ),
@@ -387,7 +394,8 @@ class _ConversationDetailScreenState extends ConsumerState<ConversationDetailScr
 
           const SizedBox(width: 8),
 
-          if (isUser) CircleAvatar(backgroundColor: colorScheme.primaryContainer, child: Icon(Icons.person, color: colorScheme.primary)),
+          if (isUser && showAvatars)
+            CircleAvatar(backgroundColor: colorScheme.primaryContainer, child: Icon(Icons.person, color: colorScheme.primary)),
         ],
       ),
     );

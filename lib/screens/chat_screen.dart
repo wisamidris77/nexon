@@ -4,6 +4,7 @@ import 'package:nexon/models/message.dart';
 import 'package:nexon/providers/conversation_provider.dart';
 import 'package:nexon/screens/conversation_detail_screen.dart';
 import 'package:nexon/components/chat_history_sidebar.dart';
+import 'package:nexon/providers/settings_provider.dart';
 
 // Temporary chat ID provider - no database entry until first message
 final temporaryChatProvider = StateProvider<bool>((ref) => false);
@@ -20,26 +21,42 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   bool _initialized = false;
 
   @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
+  void initState() {
+    super.initState();
 
-    // Auto-create new chat on first load if there's no current conversation
+    // Schedule the initialization logic for after the first frame
+    // This prevents modifying state during build
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _initializeConversation();
+    });
+  }
+
+  // New method to safely initialize the conversation outside the build phase
+  void _initializeConversation() {
     if (!_initialized) {
       _initialized = true;
 
-      // Check if we already have a conversation selected
-      final currentId = ref.read(currentConversationIdProvider);
-      if (currentId == null) {
-        // Load existing conversations
-        ref.read(conversationsProvider.future).then((conversations) {
-          if (conversations.isEmpty) {
-            // Create a new temporary chat if there are no existing conversations
-            _createNewConversation();
-          } else {
-            // Select the most recent conversation
-            ref.read(currentConversationIdProvider.notifier).state = conversations.first.id;
-          }
-        });
+      // Check app settings to determine if we should start with a new chat
+      final appSettings = ref.read(settingsProvider);
+
+      if (appSettings.startWithNewChat) {
+        // Start with a new chat regardless of previous state
+        _createNewConversation();
+      } else {
+        // Check if we already have a conversation selected
+        final currentId = ref.read(currentConversationIdProvider);
+        if (currentId == null) {
+          // Load existing conversations
+          ref.read(conversationsProvider.future).then((conversations) {
+            if (conversations.isEmpty) {
+              // Create a new temporary chat if there are no existing conversations
+              _createNewConversation();
+            } else {
+              // Select the most recent conversation
+              ref.read(currentConversationIdProvider.notifier).state = conversations.first.id;
+            }
+          });
+        }
       }
     }
   }
