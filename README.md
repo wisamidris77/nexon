@@ -62,11 +62,6 @@ Nexon is a sleek, feature-rich AI chat application that connects you with multip
 ### 🔜 MCP (Model Control Protocol) Integration
 Advanced system calling capabilities allowing AI models to interact with your system in controlled, secure ways
 
-### 🔜 Chat History & Management
-- Persistent chat history across sessions
-- Conversation management with folders and tags
-- Cloud sync capabilities
-
 ### 🔜 Enhanced UI/UX
 - Customizable themes and layouts
 - Animations and transitions
