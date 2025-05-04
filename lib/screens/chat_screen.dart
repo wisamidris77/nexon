@@ -65,24 +65,31 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   Widget build(BuildContext context) {
     final currentConversationId = ref.watch(currentConversationIdProvider);
     final isTemporaryChat = ref.watch(temporaryChatProvider);
-    final isLargeScreen = MediaQuery.of(context).size.width >= 1200;
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isLargeScreen = screenWidth >= 1200;
+    final isMediumScreen = screenWidth >= 800 && screenWidth < 1200;
 
     // Get current conversation title
     final conversationAsync = currentConversationId != null ? ref.watch(currentConversationProvider) : null;
+    final colorScheme = Theme.of(context).colorScheme;
 
     return Scaffold(
       key: _scaffoldKey,
       appBar: AppBar(
         title:
             conversationAsync == null || isTemporaryChat
-                ? const Text('Nexon AI Chat')
+                ? const Text('Nexon AI Chat', style: TextStyle(fontWeight: FontWeight.w600))
                 : conversationAsync.when(
-                  data: (conversation) => Text('Nexon AI Chat - ${conversation?.title ?? ''}'),
-                  loading: () => const Text('Nexon AI Chat'),
-                  error: (_, __) => const Text('Nexon AI Chat'),
+                  data:
+                      (conversation) => Text(
+                        conversation != null ? 'Nexon AI Chat - ${conversation.title}' : 'Nexon AI Chat',
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                  loading: () => const Text('Nexon AI Chat', style: TextStyle(fontWeight: FontWeight.w600)),
+                  error: (_, __) => const Text('Nexon AI Chat', style: TextStyle(fontWeight: FontWeight.w600)),
                 ),
         leading:
-            isLargeScreen
+            isLargeScreen || isMediumScreen
                 ? null
                 : IconButton(
                   icon: const Icon(Icons.menu),
@@ -92,25 +99,34 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 ),
         actions: [
           // Only show settings button if sidebar is not visible (mobile)
-          if (!isLargeScreen)
+          if (!isLargeScreen && !isMediumScreen)
             IconButton(
               icon: const Icon(Icons.settings),
               tooltip: 'Settings',
               onPressed: () {
-                // Use named route to avoid hero animation conflict
                 Navigator.of(context).pushNamed('/settings');
               },
             ),
         ],
       ),
-      drawer: isLargeScreen ? null : ChatHistorySidebar(onNewChat: _createNewConversation),
+      drawer: isLargeScreen || isMediumScreen ? null : ChatHistorySidebar(onNewChat: _createNewConversation),
+      floatingActionButton:
+          !isLargeScreen && !isMediumScreen ? FloatingActionButton(onPressed: _createNewConversation, child: const Icon(Icons.add)) : null,
       body: Row(
         children: [
-          // Always show sidebar on large screens
-          if (isLargeScreen) SizedBox(width: 280, child: ChatHistorySidebar(onNewChat: _createNewConversation)),
+          // Always show sidebar on large/medium screens
+          if (isLargeScreen || isMediumScreen)
+            SizedBox(width: isLargeScreen ? 280 : 250, child: ChatHistorySidebar(onNewChat: _createNewConversation)),
 
           // Main chat area
-          Expanded(child: _buildChatScreen(currentConversationId, isTemporaryChat)),
+          Expanded(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 1000),
+                child: _buildChatScreen(currentConversationId, isTemporaryChat),
+              ),
+            ),
+          ),
         ],
       ),
     );

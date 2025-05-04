@@ -1,13 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 import 'package:nexon/models/conversation.dart';
 import 'package:nexon/models/message.dart';
+import 'package:nexon/models/ai_provider.dart';
+import 'package:nexon/models/ai_settings.dart';
 import 'package:nexon/providers/conversation_provider.dart';
 import 'package:nexon/providers/database_provider.dart';
 import 'package:nexon/providers/settings_provider.dart';
-import 'package:intl/intl.dart';
+import 'package:nexon/providers/chat_provider.dart' hide aiSettingsProvider;
+import 'package:nexon/services/ai_service.dart';
 
 class ConversationDetailScreen extends ConsumerStatefulWidget {
   final String? conversationId;
@@ -27,6 +31,7 @@ class _ConversationDetailScreenState extends ConsumerState<ConversationDetailScr
   final FocusNode _focusNode = FocusNode();
   final FocusNode _tempChatFocusNode = FocusNode();
   bool _isGenerating = false;
+  AIService? _currentAIService;
 
   @override
   void initState() {
@@ -129,24 +134,108 @@ class _ConversationDetailScreenState extends ConsumerState<ConversationDetailScr
     controller.clear();
   }
 
-  void _generateResponse(String userText, String conversationId) {
-    // In a real app, you would call your AI service here
-    // For now, we'll simulate a bot response
-    Future.delayed(const Duration(seconds: 2), () {
-      if (!mounted) return;
-
-      final botMessage = Message(role: Role.bot, blocks: [TextBlock(text: "This is a simulated response to your message: \"$userText\"")]);
-
-      ref.read(conversationRepositoryProvider).addMessageToConversation(conversationId, botMessage, 1).then((_) {
-        ref.invalidate(conversationMessagesProvider);
+  void _generateResponse(String userText, String conversationId) async {
+    try {
+      // Get the conversation to access the model information
+      final conversation = await ref.read(conversationRepositoryProvider).getConversationById(conversationId);
+      if (conversation == null) {
         setState(() => _isGenerating = false);
-      });
+        return;
+      }
+
+      // Get all messages for this conversation
+      final messages = await ref.read(conversationRepositoryProvider).getMessagesForConversation(conversationId);
+
+      // Get AI settings from our AIProviderSettings provider
+      final aiProviderSettings = ref.read(aiSettingsProvider);
+
+      // Create settings object for the AI service
+      final aiProvider = AIProvider.values.firstWhere(
+        (p) => p.toString().split('.').last == conversation.aiProviderId,
+        orElse: () => AIProvider.gemini,
+      );
+
+      final model = AIModels.getAllModels().firstWhere(
+        (m) => m.id == conversation.modelId && m.provider == aiProvider,
+        orElse: () => AIModels.getDefaultModel(),
+      );
+
+      final providerKey = aiProvider.toString().split('.').last;
+      final settings = AISettings(
+        apiKey: aiProviderSettings.apiKeys[providerKey] ?? '',
+        selectedModel: model,
+        temperature: aiProviderSettings.temperature,
+        maxTokens: aiProviderSettings.maxTokens,
+        topP: aiProviderSettings.topP,
+      );
+
+      // Log for debugging
+      print('Using API key for $providerKey: ${settings.apiKey.isNotEmpty ? "API key found" : "No API key"}');
+
+      // Create AI service based on provider
+      _currentAIService = AIService.create(aiProvider);
+
+      // Generate response
+      final responseStream = await _currentAIService!.generateStreamResponse(messages, settings);
+
+      // Create a new bot message
+      String responseText = '';
+      final botMessage = Message(role: Role.bot, blocks: [TextBlock(text: responseText)]);
+
+      // Add empty bot message to the conversation
+      await ref.read(conversationRepositoryProvider).addMessageToConversation(conversationId, botMessage, messages.length);
+
+      // Stream and update the response
+      await for (final chunk in responseStream) {
+        if (!mounted) break;
+
+        responseText += chunk;
+
+        // Update the bot message with the latest text
+        final updatedBotMessage = Message(
+          id: botMessage.id,
+          role: Role.bot,
+          blocks: [TextBlock(text: responseText)],
+          createdAt: botMessage.createdAt,
+        );
+
+        await ref.read(conversationRepositoryProvider).updateMessage(conversationId, updatedBotMessage);
+
+        // Refresh the messages
+        ref.invalidate(conversationMessagesProvider);
+      }
 
       // Scroll to bottom to show new message
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _scrollToBottom();
       });
-    });
+    } catch (e) {
+      // Handle error
+      print('Error generating response: $e');
+
+      if (mounted) {
+        // Add error message
+        final errorMessage = Message(role: Role.bot, blocks: [TextBlock(text: 'Error: ${e.toString()}')]);
+        await ref.read(conversationRepositoryProvider).addMessageToConversation(conversationId, errorMessage, 1);
+        ref.invalidate(conversationMessagesProvider);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isGenerating = false);
+        _currentAIService = null;
+      }
+    }
+  }
+
+  Future<void> _stopGenerating() async {
+    if (_currentAIService != null) {
+      await _currentAIService!.stopGeneration();
+      _currentAIService = null;
+    }
+
+    if (mounted) {
+      setState(() => _isGenerating = false);
+    }
   }
 
   @override
@@ -198,7 +287,7 @@ class _ConversationDetailScreenState extends ConsumerState<ConversationDetailScr
 
                 return ListView.builder(
                   controller: _scrollController,
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.all(24),
                   itemCount: messages.length,
                   itemBuilder: (context, index) {
                     final message = messages[index];
@@ -217,81 +306,81 @@ class _ConversationDetailScreenState extends ConsumerState<ConversationDetailScr
               color: colorScheme.surface,
               boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 5, offset: const Offset(0, -1))],
             ),
-            padding: const EdgeInsets.all(8.0),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Show generation indicator and stop button
-                if (_isGenerating)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    decoration: BoxDecoration(color: colorScheme.primaryContainer.withOpacity(0.3), borderRadius: BorderRadius.circular(8)),
-                    child: Row(
+            padding: const EdgeInsets.all(16.0),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 800),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Show generation indicator and stop button
+                    if (_isGenerating)
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        decoration: BoxDecoration(color: colorScheme.primaryContainer.withOpacity(0.4), borderRadius: BorderRadius.circular(12)),
+                        child: Row(
+                          children: [
+                            SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: colorScheme.primary)),
+                            const SizedBox(width: 16),
+                            Text('Generating response...', style: TextStyle(color: colorScheme.primary, fontWeight: FontWeight.w500)),
+                            const Spacer(),
+                            IconButton(
+                              icon: Icon(Icons.stop_circle, color: colorScheme.error),
+                              tooltip: 'Stop generating',
+                              onPressed: _stopGenerating,
+                            ),
+                          ],
+                        ),
+                      ),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
-                        SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: colorScheme.primary)),
+                        Expanded(
+                          child: TextField(
+                            controller: _messageController,
+                            enabled: !_isGenerating,
+                            focusNode: _focusNode,
+                            decoration: InputDecoration(
+                              hintText: 'Type a message...',
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(20)),
+                              filled: true,
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                            ),
+                            maxLines: null,
+                            minLines: 1,
+                            textInputAction: TextInputAction.newline,
+                            keyboardType: TextInputType.multiline,
+                            onSubmitted: (text) {
+                              if (text.trim().isNotEmpty && !_isGenerating) {
+                                _sendMessage();
+                              }
+                            },
+                            // Handle key events at TextField level instead of RawKeyboardListener
+                            onEditingComplete: () {},
+                            onChanged: (_) {},
+                            // The key event handling is now done via a Focus widget below
+                          ),
+                        ),
                         const SizedBox(width: 12),
-                        Text('Generating response...', style: TextStyle(color: colorScheme.primary)),
-                        const Spacer(),
-                        IconButton(
-                          icon: Icon(Icons.stop_circle, color: colorScheme.error),
-                          tooltip: 'Stop generating',
-                          onPressed: () {
-                            setState(() => _isGenerating = false);
-                            // In a real app, you would stop the API call
-                          },
+                        FloatingActionButton(
+                          heroTag: 'send_message_fab',
+                          onPressed: _isGenerating ? null : _sendMessage,
+                          elevation: 0,
+                          child:
+                              _isGenerating
+                                  ? SizedBox(
+                                    width: 24,
+                                    height: 24,
+                                    child: CircularProgressIndicator(strokeWidth: 2, color: colorScheme.onPrimaryContainer),
+                                  )
+                                  : const Icon(Icons.send),
                         ),
                       ],
                     ),
-                  ),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _messageController,
-                        enabled: !_isGenerating,
-                        focusNode: _focusNode,
-                        decoration: InputDecoration(
-                          hintText: 'Type a message...',
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(24)),
-                          filled: true,
-                          contentPadding: const EdgeInsets.all(16),
-                        ),
-                        maxLines: null,
-                        minLines: 1,
-                        textInputAction: TextInputAction.newline,
-                        keyboardType: TextInputType.multiline,
-                        onSubmitted: (text) {
-                          if (text.trim().isNotEmpty && !_isGenerating) {
-                            _sendMessage();
-                          }
-                        },
-                        // Handle key events at TextField level instead of RawKeyboardListener
-                        onEditingComplete: () {},
-                        onChanged: (_) {},
-                        // The key event handling is now done via a Focus widget below
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 4),
-                      child: FloatingActionButton(
-                        heroTag: 'send_message_fab',
-                        onPressed: _isGenerating ? null : _sendMessage,
-                        mini: true,
-                        child:
-                            _isGenerating
-                                ? SizedBox(
-                                  width: 24,
-                                  height: 24,
-                                  child: CircularProgressIndicator(strokeWidth: 2, color: colorScheme.onPrimaryContainer),
-                                )
-                                : const Icon(Icons.send),
-                      ),
-                    ),
                   ],
                 ),
-              ],
+              ),
             ),
           ),
         ],
@@ -309,93 +398,117 @@ class _ConversationDetailScreenState extends ConsumerState<ConversationDetailScr
     final showTimestamps = appSettings.showTimestamps;
 
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      padding: const EdgeInsets.symmetric(vertical: 12.0),
       child: Row(
         mainAxisAlignment: isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (!isUser && showAvatars)
-            CircleAvatar(backgroundColor: colorScheme.primary.withOpacity(0.2), child: Icon(Icons.smart_toy, color: colorScheme.primary)),
+            CircleAvatar(
+              backgroundColor: colorScheme.primary.withOpacity(0.2),
+              radius: 18,
+              child: Icon(Icons.smart_toy, color: colorScheme.primary, size: 20),
+            ),
 
-          const SizedBox(width: 8),
+          const SizedBox(width: 12),
 
           Flexible(
-            child: Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: isUser ? colorScheme.primaryContainer : colorScheme.surfaceVariant,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: isUser ? colorScheme.primary.withOpacity(0.2) : colorScheme.outline.withOpacity(0.1), width: 1),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  ...message.blocks.map((block) {
-                    if (block is TextBlock) {
-                      try {
-                        return MarkdownBody(
-                          data: block.text,
-                          selectable: true,
-                          styleSheet: MarkdownStyleSheet(
-                            p: TextStyle(color: isUser ? colorScheme.onPrimaryContainer : colorScheme.onSurfaceVariant),
-                            code: TextStyle(
-                              backgroundColor: isUser ? colorScheme.primary.withOpacity(0.1) : colorScheme.surface,
-                              fontFamily: 'monospace',
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 700),
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: isUser ? colorScheme.primaryContainer : colorScheme.surfaceVariant,
+                  borderRadius: BorderRadius.only(
+                    topLeft: Radius.circular(!isUser ? 4 : 16),
+                    topRight: Radius.circular(isUser ? 4 : 16),
+                    bottomLeft: const Radius.circular(16),
+                    bottomRight: const Radius.circular(16),
+                  ),
+                  boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 4, offset: const Offset(0, 2))],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    ...message.blocks.map((block) {
+                      if (block is TextBlock) {
+                        try {
+                          return MarkdownBody(
+                            data: block.text,
+                            selectable: true,
+                            styleSheet: MarkdownStyleSheet(
+                              p: TextStyle(color: isUser ? colorScheme.onPrimaryContainer : colorScheme.onSurfaceVariant, fontSize: 15, height: 1.5),
+                              code: TextStyle(
+                                backgroundColor: isUser ? colorScheme.primary.withOpacity(0.1) : Colors.black.withOpacity(0.05),
+                                fontFamily: 'monospace',
+                                fontSize: 14,
+                              ),
+                              codeblockDecoration: BoxDecoration(
+                                color: isUser ? colorScheme.primary.withOpacity(0.1) : Colors.black.withOpacity(0.05),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              blockSpacing: 12,
+                            ),
+                          );
+                        } catch (e) {
+                          // Fallback to simple selectable text if markdown throws an error
+                          return SelectableText(
+                            block.text,
+                            style: TextStyle(
+                              color: isUser ? colorScheme.onPrimaryContainer : colorScheme.onSurfaceVariant,
+                              fontSize: 15,
+                              height: 1.5,
+                            ),
+                          );
+                        }
+                      } else if (block is ToolCallBlock) {
+                        return Card(
+                          margin: const EdgeInsets.symmetric(vertical: 8),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          child: Padding(
+                            padding: const EdgeInsets.all(12.0),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text('Tool Call: ${block.toolName}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                                const SizedBox(height: 8),
+                                if (block.result != null) ...[
+                                  const Divider(),
+                                  Text('Result:', style: const TextStyle(fontStyle: FontStyle.italic)),
+                                  const SizedBox(height: 4),
+                                  Text(block.result!),
+                                ],
+                              ],
                             ),
                           ),
                         );
-                      } catch (e) {
-                        // Fallback to simple selectable text if markdown throws an error
-                        return SelectableText(
-                          block.text,
-                          style: TextStyle(color: isUser ? colorScheme.onPrimaryContainer : colorScheme.onSurfaceVariant),
-                        );
+                      } else {
+                        return const Text('Unsupported block type');
                       }
-                    } else if (block is ToolCallBlock) {
-                      return Card(
-                        margin: const EdgeInsets.symmetric(vertical: 8),
-                        child: Padding(
-                          padding: const EdgeInsets.all(8.0),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text('Tool Call: ${block.toolName}', style: const TextStyle(fontWeight: FontWeight.bold)),
-                              const SizedBox(height: 4),
-                              if (block.result != null) ...[
-                                const Divider(),
-                                Text('Result:', style: const TextStyle(fontStyle: FontStyle.italic)),
-                                Text(block.result!),
-                              ],
-                            ],
+                    }).toList(),
+
+                    // Timestamp - only show if enabled in settings
+                    if (showTimestamps)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 12.0),
+                        child: Text(
+                          DateFormat('h:mm a').format(message.createdAt),
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: isUser ? colorScheme.onPrimaryContainer.withOpacity(0.6) : colorScheme.onSurfaceVariant.withOpacity(0.6),
                           ),
                         ),
-                      );
-                    } else {
-                      return const Text('Unsupported block type');
-                    }
-                  }).toList(),
-
-                  // Timestamp - only show if enabled in settings
-                  if (showTimestamps)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 8.0),
-                      child: Text(
-                        DateFormat('h:mm a').format(message.createdAt),
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: isUser ? colorScheme.onPrimaryContainer.withOpacity(0.6) : colorScheme.onSurfaceVariant.withOpacity(0.6),
-                        ),
                       ),
-                    ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
 
-          const SizedBox(width: 8),
+          const SizedBox(width: 12),
 
           if (isUser && showAvatars)
-            CircleAvatar(backgroundColor: colorScheme.primaryContainer, child: Icon(Icons.person, color: colorScheme.primary)),
+            CircleAvatar(backgroundColor: colorScheme.primaryContainer, radius: 18, child: Icon(Icons.person, color: colorScheme.primary, size: 20)),
         ],
       ),
     );
@@ -408,10 +521,13 @@ class _ConversationDetailScreenState extends ConsumerState<ConversationDetailScr
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.chat_bubble_outline, size: 64, color: colorScheme.primary.withOpacity(0.5)),
-          const SizedBox(height: 16),
-          Text('Start a new conversation', style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 8),
+          Icon(Icons.chat_bubble_outline, size: 72, color: colorScheme.primary.withOpacity(0.5)),
+          const SizedBox(height: 24),
+          Text(
+            'Start a new conversation',
+            style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold, color: colorScheme.onBackground),
+          ),
+          const SizedBox(height: 12),
           Text(
             'Type a message below to get started',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: colorScheme.onBackground.withOpacity(0.7)),
@@ -537,7 +653,7 @@ class _ConversationDetailScreenState extends ConsumerState<ConversationDetailScr
     final colorScheme = Theme.of(context).colorScheme;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('New Chat')),
+      appBar: AppBar(title: const Text('New Chat', style: TextStyle(fontWeight: FontWeight.w600)), elevation: 0),
       body: Column(
         children: [
           // Empty state
@@ -549,80 +665,78 @@ class _ConversationDetailScreenState extends ConsumerState<ConversationDetailScr
               color: colorScheme.surface,
               boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 5, offset: const Offset(0, -1))],
             ),
-            padding: const EdgeInsets.all(8.0),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Show generation indicator and stop button
-                if (_isGenerating)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    decoration: BoxDecoration(color: colorScheme.primaryContainer.withOpacity(0.3), borderRadius: BorderRadius.circular(8)),
-                    child: Row(
+            padding: const EdgeInsets.all(16.0),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 800),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Show generation indicator and stop button
+                    if (_isGenerating)
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        decoration: BoxDecoration(color: colorScheme.primaryContainer.withOpacity(0.4), borderRadius: BorderRadius.circular(12)),
+                        child: Row(
+                          children: [
+                            SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: colorScheme.primary)),
+                            const SizedBox(width: 16),
+                            Text('Generating response...', style: TextStyle(color: colorScheme.primary, fontWeight: FontWeight.w500)),
+                            const Spacer(),
+                            IconButton(
+                              icon: Icon(Icons.stop_circle, color: colorScheme.error),
+                              tooltip: 'Stop generating',
+                              onPressed: _stopGenerating,
+                            ),
+                          ],
+                        ),
+                      ),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
-                        SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: colorScheme.primary)),
+                        Expanded(
+                          child: TextField(
+                            controller: _tempChatMessageController,
+                            enabled: !_isGenerating,
+                            focusNode: _tempChatFocusNode,
+                            autofocus: true,
+                            decoration: InputDecoration(
+                              hintText: 'Type a message to start a new chat...',
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(20)),
+                              filled: true,
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                            ),
+                            maxLines: null,
+                            minLines: 1,
+                            textInputAction: TextInputAction.newline,
+                            keyboardType: TextInputType.multiline,
+                            onSubmitted: (text) {
+                              if (text.trim().isNotEmpty && !_isGenerating) {
+                                _sendMessage();
+                              }
+                            },
+                          ),
+                        ),
                         const SizedBox(width: 12),
-                        Text('Generating response...', style: TextStyle(color: colorScheme.primary)),
-                        const Spacer(),
-                        IconButton(
-                          icon: Icon(Icons.stop_circle, color: colorScheme.error),
-                          tooltip: 'Stop generating',
-                          onPressed: () {
-                            setState(() => _isGenerating = false);
-                            // In a real app, you would stop the API call
-                          },
+                        FloatingActionButton(
+                          heroTag: 'temp_chat_fab',
+                          onPressed: _isGenerating ? null : _sendMessage,
+                          elevation: 0,
+                          child:
+                              _isGenerating
+                                  ? SizedBox(
+                                    width: 24,
+                                    height: 24,
+                                    child: CircularProgressIndicator(strokeWidth: 2, color: colorScheme.onPrimaryContainer),
+                                  )
+                                  : const Icon(Icons.send),
                         ),
                       ],
                     ),
-                  ),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _tempChatMessageController,
-                        enabled: !_isGenerating,
-                        focusNode: _tempChatFocusNode,
-                        decoration: InputDecoration(
-                          hintText: 'Type a message to start a new chat...',
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(24)),
-                          filled: true,
-                          contentPadding: const EdgeInsets.all(16),
-                        ),
-                        maxLines: null,
-                        minLines: 1,
-                        textInputAction: TextInputAction.newline,
-                        keyboardType: TextInputType.multiline,
-                        onSubmitted: (text) {
-                          if (text.trim().isNotEmpty && !_isGenerating) {
-                            _sendMessage();
-                          }
-                        },
-                        // Handle key events at TextField level instead of RawKeyboardListener
-                        onEditingComplete: () {},
-                        onChanged: (_) {},
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 4),
-                      child: FloatingActionButton(
-                        heroTag: 'send_message_fab',
-                        onPressed: _isGenerating ? null : _sendMessage,
-                        mini: true,
-                        child:
-                            _isGenerating
-                                ? SizedBox(
-                                  width: 24,
-                                  height: 24,
-                                  child: CircularProgressIndicator(strokeWidth: 2, color: colorScheme.onPrimaryContainer),
-                                )
-                                : const Icon(Icons.send),
-                      ),
-                    ),
                   ],
                 ),
-              ],
+              ),
             ),
           ),
         ],

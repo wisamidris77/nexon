@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:nexon/models/ai_provider.dart';
-import 'package:nexon/providers/chat_provider.dart';
+import 'package:nexon/providers/chat_provider.dart' hide aiSettingsProvider;
 import 'package:nexon/models/folder.dart';
 import 'package:nexon/models/tag.dart';
 import 'package:nexon/providers/conversation_provider.dart';
 import 'package:nexon/providers/database_provider.dart';
 import 'package:nexon/providers/theme_provider.dart';
 import 'package:nexon/providers/settings_provider.dart';
+import 'package:nexon/models/ai_settings.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({Key? key}) : super(key: key);
@@ -34,9 +35,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
     _tabController = TabController(length: 4, vsync: this);
     // Initialize values from the provider state
     final settings = ref.read(aiSettingsProvider);
-    _apiKeyController.text = settings.apiKey;
-    _selectedProvider = settings.selectedModel.provider;
-    _selectedModel = settings.selectedModel;
+    // Get the apiKey for the current provider
+    _apiKeyController.text = settings.apiKeys[_selectedProvider.toString().split('.').last] ?? '';
     _temperature = settings.temperature;
     _maxTokens = settings.maxTokens;
     _topP = settings.topP;
@@ -65,7 +65,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
 
   void _saveApiKey() {
     final settingsNotifier = ref.read(aiSettingsProvider.notifier);
-    settingsNotifier.updateApiKey(_apiKeyController.text);
+    settingsNotifier.setApiKey(_selectedProvider, _apiKeyController.text);
   }
 
   void _saveCustomModel() {
@@ -77,7 +77,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
         name: 'Custom Model',
         description: 'Custom model configuration',
       );
-      settingsNotifier.updateModel(model);
+      // No updateModel method, we'll need to update this later
     }
   }
 
@@ -86,8 +86,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
       setState(() {
         _selectedModel = model;
       });
-      final settingsNotifier = ref.read(aiSettingsProvider.notifier);
-      settingsNotifier.updateModel(model);
+      // No updateModel method in AISettingsNotifier
     }
   }
 
@@ -98,6 +97,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
         _selectedModel = null;
         _useCustomModel = false;
       });
+
+      // Update API key field for the selected provider
+      final settings = ref.read(aiSettingsProvider);
+      _apiKeyController.text = settings.apiKeys[provider.toString().split('.').last] ?? '';
 
       // Set default model for this provider
       if (provider == AIProvider.gemini) {
@@ -112,7 +115,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
     setState(() {
       _temperature = value;
     });
-    ref.read(aiSettingsProvider.notifier).updateTemperature(value);
+    ref.read(aiSettingsProvider.notifier).setTemperature(value);
   }
 
   void _updateMaxTokens(double value) {
@@ -120,14 +123,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
     setState(() {
       _maxTokens = tokens;
     });
-    ref.read(aiSettingsProvider.notifier).updateMaxTokens(tokens);
+    ref.read(aiSettingsProvider.notifier).setMaxTokens(tokens);
   }
 
   void _updateTopP(double value) {
     setState(() {
       _topP = value;
     });
-    ref.read(aiSettingsProvider.notifier).updateTopP(value);
+    ref.read(aiSettingsProvider.notifier).setTopP(value);
   }
 
   void _updateUseCustomModel(bool? value) {
